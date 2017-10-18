@@ -1,0 +1,35 @@
+# OSX
+.DS_Store
+._.DS_Store
+
+# LaTex
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.dep
+*.src
+
+# The Rest
+.docker-sandbox/
+dist/
+/.project
+*.lkshs
+*.lkshw
+*.un~
+cabal.sandbox.config
+.hsenv
+.stack-work/
+dist-stack/
+*.tix
+/.local-bin/
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Vim
+*.swp
