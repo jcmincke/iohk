@@ -49,8 +49,6 @@ Available options:
 | --wait-for ARG  |  Grace period in seconds                                     |
 | --with-seed ARG |  Seed                                                        |
 | --nb-msgs ARG   |  Number of messages to generate during the submission period |
-|-----------------|--------------------------------------------------------------|
-
 
 #Configuration:
 
