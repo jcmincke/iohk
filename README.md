@@ -1,4 +1,4 @@
-#Assumptions:
+# Assumptions:
 
 1. There is no single source of synchronized time, each agent has its own source.
 According to the requirement, no 2 messages can have the same time. Since this cannot be guaranteed, if 2 messages have the same time then the one with the greatest value is kept.
@@ -14,7 +14,7 @@ According to the requirement, no 2 messages can have the same time. Since this c
 1. Agents can be stopped and restarted at will.
 
 
-#Algorithm.
+# Algorithm.
 
 Each agent maintains a payload (see *Payload* and *WeightedSum* data types) which is a time ordered list of all the messages it has received so far.
 
@@ -34,7 +34,7 @@ The payload size increases continuously. To limit the payload size, a compaction
 Compacting payloads may lead to the rejection of some messages (see the function *addMsg* ). A message whose time is before the *timeLastMsg* of the weighted sum is rejected. Indeed, information about time (thus, about message indexes) for the messages that have already been compacted is lost.
 
 
-#Usage:
+# Usage:
 
 Usage: iohk-exe [-h|--host ARG] [-p|--port ARG] [--send-for ARG]
                 [--wait-for ARG] [--with-seed ARG] [--nb-msgs ARG]
@@ -50,7 +50,7 @@ Available options:
 | --with-seed ARG |  Seed                                                        |
 | --nb-msgs ARG   |  Number of messages to generate during the submission period |
 
-#Configuration:
+# Configuration:
 
 *defNodes* in Main.hs is a list of nodes (host + port) together with a (per agent) seed and number of messages to generate.
 
