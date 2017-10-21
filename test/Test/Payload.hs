@@ -18,7 +18,13 @@ import GHC.Exts (sortWith)
 
 tests :: [Test]
 tests = [
+
   testProperty "testFullCompactPayloadProp" testFullCompactPayloadProp
+  , testProperty "testChooseMeProp" testChooseMeProp
+  , testProperty "testChooseBothProp" testChooseBothProp
+  , testProperty "testChooseOtherProp" testChooseOtherProp
+  , testProperty "testChooseNoneProp" testChooseNoneProp
+
   , testProperty "testCompactPayload" testCompactPayloadProp
   , testProperty "testMultipleCompactPayloadProp" testMultipleCompactPayloadProp
   , testProperty "testMultipleCompactPayloadCutoffTimeProp" testMultipleCompactPayloadCutoffTimeProp
@@ -34,6 +40,63 @@ payloadGen n = do
   where
   mkUniq :: [Int] -> [Int]
   mkUniq = S.toList . S.fromList
+
+
+
+testChooseNoneProp :: Property
+testChooseNoneProp =
+  forAll (payloadGen 1000) testChooseMe
+
+
+testChooseNone :: Payload Int -> Bool
+testChooseNone payload@(Payload s msgs)  =
+    case (choosePayload payload payload) of
+      (_, None) -> True
+      _ -> False
+
+testChooseMeProp :: Property
+testChooseMeProp =
+  forAll (payloadGen 1000) testChooseMe
+
+
+testChooseMe :: Payload Int -> Property
+testChooseMe payload@(Payload s msgs)  =
+  L.length msgs > 10 ==>
+    case (choosePayload payload payload2) of
+      (_, Me) -> True
+      _ -> False
+  where
+  n = L.length msgs `div` 2
+  payload2 = Payload s $ L.take n msgs
+
+
+testChooseOtherProp :: Property
+testChooseOtherProp =
+  forAll (payloadGen 10) testChooseOther
+
+
+testChooseOther :: Payload Int -> Property
+testChooseOther payload@(Payload s msgs)  =
+  L.length msgs > 10 ==>
+--    case (mergeMsgsWithMod msgs2 msgs ) of
+    case (choosePayload payload2 payload ) of
+      (_, Other) -> True
+      (_, x) -> trace (show ("res ", x)) False
+  where
+  n = L.length msgs `div` 2
+  msgs2 = L.take n msgs
+  payload2 = Payload s msgs2
+
+
+testChooseBothProp :: Property
+testChooseBothProp =
+  forAll ((,) <$> (payloadGen 1000) <*> (payloadGen 1000)) testChooseBoth
+
+testChooseBoth :: (Payload Int, Payload Int) -> Bool
+testChooseBoth (p1, p2) =
+  case (choosePayload p1 p2) of
+    (_, Both) -> True
+    _ -> False
 
 fullCompactPayloadRef :: (Num t, Eq t) => Payload t -> Payload t
 fullCompactPayloadRef (Payload (WeightedSum 0 0.0 0) msgs) =
@@ -76,7 +139,6 @@ testMultipleCompactPayload (p@(Payload _ msgs), cutoffs) =
   case (comparePayload actual expected) of
     True -> True
     False ->  trace (show (actual, expected, L.length msgs)) $ False
-    --(comparePayload actual expected)
   where
   actual = fullCompactPayload $ L.foldl' compactPayload p cutoffs
   expected = fullCompactPayloadRef p

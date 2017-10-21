@@ -85,7 +85,7 @@ makeConfig host port seed nbMsgs (MkOptions {..}) =
   cfComReliabilityProb = optComReliabilityProb
   -- maximum number of messages in a payload before compaction happens
   -- Set it to a fraction of the total number of messages to enable campaction
-  cfCompactingMaxLen = maxBound
+  cfCompactingMaxLen = 25 -- maxBound
 
 
 

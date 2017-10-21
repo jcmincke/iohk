@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RankNTypes #-}
 
 
 module Iohk
@@ -14,9 +15,12 @@ module Iohk
   , compactPayloadCutoffTime
   , fullCompactPayload
   , runIOHK
-  , WeightedSum(..)
+  , InfoSource(..)
   , Payload(..)
+  , WeightedSum(..)
   , __remoteTable
+
+  , mergeMsgsWithMod
   )
 where
 import Debug.Trace (trace)
@@ -108,7 +112,8 @@ compactPayload :: Payload Int -> Int -> Payload Int
 compactPayload (Payload wsum msgs) len =
   checkPayload $ Payload wsum' after
   where
-  (before, after) = L.splitAt len msgs
+  lenToCompress = L.length msgs - len
+  (before, after) = L.splitAt lenToCompress msgs
   wsum' = computeWeightedSum wsum before
 
 
@@ -153,20 +158,31 @@ mergeMsgs msgs1 msgs2 = fst $ mergeMsgsWithMod msgs1 msgs2
 -- | Merge 2 lists of messages, preserving the order, and determine which one (or both) has the most information.
 mergeMsgsWithMod :: (Ord t, Ord v) =>
   [(t, v)] -> [(t, v)] -> ([(t, v)], InfoSource)
-mergeMsgsWithMod = go
+mergeMsgsWithMod = go None
   where
-  go [] [] = ([], None)
-  go msg1s [] = (msg1s, Me)
-  go [] msg2s = (msg2s, Other)
-  go ((t1, v1) : rest1) msgs2@((t2, _) : _) | t1 < t2 =
-    let (rest, infoSrc) = go rest1 msgs2
-    in ((t1, v1) : rest, Me <> infoSrc)
-  go msgs1@((t1, _) : _) ((t2, v2) : rest2) | t2 < t1 =
-    let (rest, infoSrc) =  go msgs1 rest2
-    in ((t2, v2) : rest, Other <> infoSrc)
-  go ((t1, v1) : rest1) ((_, v2) : rest2)  =
-    let (rest, infoSrc) = go rest1 rest2
-    in ((t1, max v1 v2) : rest, Both <> infoSrc)
+  go infoSrc [] [] = ([], infoSrc)
+  go infoSrc msg1s [] = (msg1s, Me <> infoSrc)
+  go infoSrc [] msg2s = (msg2s, Other <> infoSrc)
+
+  go infoSrc ((t1, v1) : rest1) msgs2@((t2, _) : _) | t1 < t2 =
+    let (rest, infoSrc') = go (Me <> infoSrc) rest1 msgs2
+    in ((t1, v1) : rest, infoSrc')
+
+  go infoSrc msgs1@((t1, _) : _) ((t2, v2) : rest2) | t2 < t1 =
+    let (rest, infoSrc') =  go (Other <> infoSrc) msgs1 rest2
+    in ((t2, v2) : rest, infoSrc')
+
+  go infoSrc ((t1, v1) : rest1) ((_, v2) : rest2)  =
+    let (rest, infoSrc') = go (mod') rest1 rest2
+    in ((t1, max v1 v2): rest, infoSrc')
+    where
+    mod' = mod <> infoSrc
+    mod = if v1 == v2
+          then None
+          else  if v1 > v2
+                then Me
+                else Other
+
 
 
 -- | Choose (or merge if necessary) 2 payload and determine which one (or both) has the most information.
@@ -177,7 +193,9 @@ choosePayload (Payload wsum1@(WeightedSum _ s1 t1) msgs1)
   where
   (Payload wsum3@(WeightedSum _ s3 _) msgs3) = compactPayloadCutoffTime p2 t1
   (wsum, infoSrc) =
-    if s1 >= s3 then (wsum1, Me) else (wsum3, Other) -- we keept the highest weighed sum to conform to the requirement.
+    if s1 == s3
+    then (wsum1, None)
+    else if s1 > s3 then (wsum1, Me) else (wsum3, Other) -- we keept the highest weighed sum to conform to the requirement.
   (msgs, infoSrc') = mergeMsgsWithMod msgs1 msgs3
 
 choosePayload p1 p2 =
@@ -185,6 +203,7 @@ choosePayload p1 p2 =
   in (payload', reverseInfoSource infoSrc)
 
 data InfoSource = Me | Other | Both | None
+  deriving Show
 
 reverseInfoSource :: InfoSource -> InfoSource
 reverseInfoSource Me = Other
@@ -201,7 +220,7 @@ instance Monoid InfoSource where
   mappend Me Other = Both
   mappend Other Me = Both
   mappend Me Me = Me
-  mappend Other Other = Me
+  mappend Other Other = Other
 
 sendToOtherNodes :: (Typeable a, Binary a) =>
   StdGen -> Float -> a -> [NodeId] -> Process StdGen
@@ -264,7 +283,7 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
 
 
             case infoSrc of
-              None -> goInGrace n newPayload  -- no new information, do not notify
+              None -> go rng selfPid n newPayload  -- no new information, do not notify
               Me -> do
                 -- I am up to date, the sender does not add any information.
                 -- However the sender has less information than me so let it know
@@ -290,7 +309,7 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
                 rng' <- sendToOtherNodes rng cfComReliabilityProb (compactedNewPayload, selfPid) otherNodeIds
                 go rng' selfPid (n+1) compactedNewPayload
         , match $ \Grace -> do
-            liftIO $ hPrint stderr ("Entering grace period")
+            liftIO $ hPutStrLn stderr ("Entering grace period")
             -- Forward Grace message. Uncomment to see what happens.
             -- forM_ otherNodeIds (\other -> nsendRemote other "iohkAgent" Grace)
             goInGrace n payload
@@ -316,6 +335,7 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
             liftIO $ hPrint stderr (nbMsgs, wsum)
             return ()
       ]
+
 
 -- | Generate messages : time and value.
 genMsgs :: Int -> Int -> StdGen -> ([(Int, Float)], StdGen)
