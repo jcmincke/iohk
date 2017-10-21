@@ -20,6 +20,7 @@ data Options = MkOptions {
   , optGracePeriod :: Int
   , optWithSeed :: Maybe Int
   , optNbMsgs :: Maybe Int
+  , optComReliabilityProb :: Float
   }
   deriving (Show)
 
@@ -48,6 +49,10 @@ optionParser =
         <*> optional (option auto (
               long "nb-msgs"
               <> (help "Number of messages to generate during the submission period")))
+        <*> (option auto (
+              long "com-rel"
+              <> value 1.0
+              <> (help "Reliability of communication [0-1]")))
 
 -- | Parse command line options
 parseCliArgs :: IO Options
@@ -55,13 +60,14 @@ parseCliArgs = customExecParser (prefs showHelpOnError) (info optionParser fullD
 
 -- | General configuration for an IOHK agent.
 data Config = MkConfig {
-  cfHost :: String              -- ^ Post address.
-  , cfPort :: String            -- ^ Port number.
-  , cfSubmissionPeriod :: Int   -- ^ The submission period in microseconds.
-  , cfGracePeriod :: Int        -- ^ The grace period in microseconds.
-  , cfSeed :: Int               -- ^ Seed for the RNG that generates values and times.
-  , cfNbMsgs :: Int             -- ^ Number of message to be sent during the submission period.
-  , cfCompactingMaxLen :: Int   -- ^ Maximum number of messages in payload before compaction happens.
+  cfHost :: String                  -- ^ Post address.
+  , cfPort :: String                -- ^ Port number.
+  , cfSubmissionPeriod :: Int       -- ^ The submission period in microseconds.
+  , cfGracePeriod :: Int            -- ^ The grace period in microseconds.
+  , cfSeed :: Int                   -- ^ Seed for the RNG that generates values and times.
+  , cfNbMsgs :: Int                 -- ^ Number of message to be sent during the submission period.
+  , cfCompactingMaxLen :: Int       -- ^ Maximum number of messages in payload before compaction happens.
+  , cfComReliabilityProb :: Float   -- ^ Probability a message is sent correctly.
   }
   deriving (Show)
 
@@ -76,6 +82,7 @@ makeConfig host port seed nbMsgs (MkOptions {..}) =
   cfGracePeriod = optGracePeriod * 1000000
   cfSeed = fromMaybe seed optWithSeed
   cfNbMsgs = fromMaybe nbMsgs optNbMsgs
+  cfComReliabilityProb = optComReliabilityProb
   -- maximum number of messages in a payload before compaction happens
   -- Set it to a fraction of the total number of messages to enable campaction
   cfCompactingMaxLen = maxBound

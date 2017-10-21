@@ -22,16 +22,16 @@ where
 import Debug.Trace (trace)
 
 import            Control.Concurrent
-import            Data.Binary
-import qualified  Data.List as L
-import            Data.Monoid
-import            Data.Typeable
 import            Control.Distributed.Process
 import            Control.Distributed.Process.Closure
 import            Control.Distributed.Process.Internal.Types (LocalNode)
 import            Control.Distributed.Process.Node (runProcess)
-import            Control.Monad (forM_)
+import            Control.Monad (when, foldM)
+import            Data.Binary
+import qualified  Data.List as L
+import            Data.Monoid
 import qualified  Data.Set as S
+import            Data.Typeable
 import            GHC.Generics (Generic)
 import            System.IO
 import            System.Random
@@ -203,6 +203,22 @@ instance Monoid InfoSource where
   mappend Me Me = Me
   mappend Other Other = Me
 
+sendToOtherNodes :: (Typeable a, Binary a) =>
+  StdGen -> Float -> a -> [NodeId] -> Process StdGen
+sendToOtherNodes rng prob what others =
+  foldM proc rng others
+  where
+  proc g other = do
+    let (p, g') = randomR (0.0, 1.0) g
+    when (p <= prob) $ nsendRemote other "iohkAgent" what
+    return g'
+
+sendToPid :: (Binary a, Typeable a) => StdGen -> Float -> a -> ProcessId -> Process StdGen
+sendToPid rng prob what pid = do
+  when (p <= prob) $ send pid what
+  return rng'
+  where
+  (p, rng') = randomR (0.0, 1.0) rng
 
 -- | Start the IOHL Agent.
 runIOHK ::
@@ -219,14 +235,15 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
     _ <- spawnLocal (makeMsgSenderProcess cfg selfPid)
     _ <- spawnLocal (makeTimerProcess cfg selfPid)
     let payload = Payload (WeightedSum 0 0.0 0) [] :: Payload Int
-    go selfPid (1::Int) payload
-  go selfPid n payload = do
+    let rng = mkStdGen cfSeed
+    go rng selfPid (1::Int) payload
+  go rng selfPid n payload = do
     receiveWait
       [ match $ \(t, v) -> do
           case addMsg (t, v) payload of
             Nothing -> do
               liftIO $ hPrint stderr (n, "Cannot add message", t, v, weightedSum payload)
-              go selfPid n payload
+              go rng selfPid n payload
             Just payload1 -> do
               liftIO $ hPrint stderr (n, "Accept message ", t, v)
 
@@ -238,8 +255,8 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
                     return p
                   False -> return payload1
               -- new information is inserted, notify everyone.
-              forM_ otherNodeIds (\other -> nsendRemote other "iohkAgent" (payload2, selfPid))
-              go selfPid (n+1) payload2
+              rng' <- sendToOtherNodes rng cfComReliabilityProb (payload2, selfPid) otherNodeIds
+              go rng' selfPid (n+1) payload2
 
         , match $ \((otherPayload, senderPid)::(Payload Int, ProcessId)) -> do
             liftIO $ hPrint stderr (n, "Received payload message")
@@ -252,13 +269,13 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
                 -- I am up to date, the sender does not add any information.
                 -- However the sender has less information than me so let it know
                 liftIO $ hPrint stderr (n, "I have more information, notifying the sender")
-                send senderPid (newPayload, selfPid)
-                go selfPid (n+1) newPayload
+                rng' <- sendToPid rng cfComReliabilityProb (newPayload, selfPid) senderPid
+                go rng' selfPid (n+1) newPayload
               Other -> do
                 -- The sender has more information than I.
                 -- No need to notify anyone since the sender already did it
                 liftIO $ hPrint stderr (n, "The sender has more information")
-                go selfPid (n+1) newPayload
+                go rng selfPid (n+1) newPayload
               Both -> do
                 -- The sender and I have complementary information
                 -- Compacting & Notify everyone
@@ -270,8 +287,8 @@ runIOHK cfg@(MkConfig{..}) node otherNodeIds = do
                         liftIO $ hPrint stderr (n, "Compacted payload", s)
                         return p
                       False -> return newPayload
-                forM_ otherNodeIds (\other -> nsendRemote other "iohkAgent" compactedNewPayload)
-                go selfPid (n+1) compactedNewPayload
+                rng' <- sendToOtherNodes rng cfComReliabilityProb (compactedNewPayload, selfPid) otherNodeIds
+                go rng' selfPid (n+1) compactedNewPayload
         , match $ \Grace -> do
             liftIO $ hPrint stderr ("Entering grace period")
             -- Forward Grace message. Uncomment to see what happens.
@@ -326,7 +343,7 @@ makeMsgSenderProcess (MkConfig {..}) iohkAgentPid = do
   go n t0 ((t,v) : rest) = do
     liftIO $ threadDelay (t-t0)
     send iohkAgentPid (t, v)
-    go (n+1)t rest
+    go (n+1) t rest
   go _ _ [] = return ()
 
   gen = mkStdGen cfSeed
